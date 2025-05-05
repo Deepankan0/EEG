@@ -26,9 +26,9 @@
 #!/bin/bash
 
 # Input and output paths
-input_csv="/mnt/Storage/Backupdata/MRI/26122023/project_EEG/EEG_scripts/EEG_sheet.csv"
-base_dir="/mnt/Storage/Backupdata/MRI/26122023/EEG_backup_31032025"
-output_dir="/mnt/Storage/Backupdata/MRI/26122023/project_EEG/BIDS"
+input_csv="DATA_SHEET.csv"
+base_dir="/PATH_to_your_input_folder"
+output_dir="/Path_to_your_desired_output_folder"
 
 # Build search paths
 EEG_dirs=("$base_dir"/*/DATA-*/EEG/*)
