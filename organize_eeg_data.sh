@@ -16,8 +16,8 @@
 #   - Organized BIDS-compatible directories for each subject-session
 #   - JSON metadata file summarizing subject information
 #
-# Author: [Your Name]
-# Date: [Date]
+# Author: Deepankan
+# Date: 05MAy2025
 ###############################################################################
 
 # -----------------------------
