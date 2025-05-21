@@ -30,6 +30,7 @@ input_csv="DATA_SHEET.csv"
 base_dir="/PATH_to_your_input_folder"
 output_dir="/Path_to_your_desired_output_folder"
 
+
 # Build search paths
 EEG_dirs=("$base_dir"/*/DATA-*/EEG/*)
 ERP_dirs=("$base_dir"/*/DATA-*/ERP/*)
@@ -45,32 +46,43 @@ for eeg_folder in "${EEG_dirs[@]}"; do
 
         echo "🔍 Checking EEG_ID=$eeg_id (from folder: $eeg_basename)"
 
-        # Find matching line in CSV
-        line=$(awk -F',' -v id="$eeg_id" 'NR > 1 && $3 == id {print}' "$input_csv")
+        # Match CSV line by EEG_ID (field 3)
+        line=$(awk -F',' -v id="$eeg_id" 'NR>1 && $3==id {print}' "$input_csv")
 
         if [ -n "$line" ]; then
-            # Extract CSV fields
             ADBS_ID=$(echo "$line" | cut -d',' -f1 | tr -d '"' | xargs)
             ASSESSMENT_ID=$(echo "$line" | cut -d',' -f2 | tr -d '"' | xargs)
             EEG_ID=$(echo "$line" | cut -d',' -f3 | tr -d '"' | xargs)
-            ERP_NO=$(echo "$line" | cut -d',' -f4 | tr -d '"' | xargs)
-            GPS_NO=$(echo "$line" | cut -d',' -f5 | tr -d '"' | xargs)
+
+            raw_ERP_NO=$(echo "$line" | cut -d',' -f4 | tr -d '"' | xargs)
+            raw_GPS_NO=$(echo "$line" | cut -d',' -f5 | tr -d '"' | xargs)
+
             SSO_REMARKS=$(echo "$line" | awk -F',' '{gsub(/^[ \t]+|[ \t]+$/, "", $6); print $6}')
 
             # Escape special characters for JSON
-            SSO_REMARKS_ESCAPED=$(printf '%s' "$SSO_REMARKS" | sed \
-                -e 's/\\/\\\\/g' \
-                -e 's/"/\\"/g' \
-                -e ':a;N;$!ba;s/\n/\\n/g' \
-                -e 's/\r/\\r/g')
+            SSO_REMARKS_ESCAPED=$(printf '%s' "$SSO_REMARKS" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e ':a;N;$!ba;s/\n/\\n/g' -e 's/\r/\\r/g')
 
             prefix=${ASSESSMENT_ID:0:3}
             dest_dir="$output_dir/$ADBS_ID/ses-$prefix"
 
-            echo "Matched CSV: ADBS_ID=$ADBS_ID, ASSESSMENT_ID=$ASSESSMENT_ID, ERP_NO=$ERP_NO, GPS_NO=$GPS_NO"
+            # Pad ERP_NO to 3 digits (if number)
+            if [[ "$raw_ERP_NO" =~ ^[0-9]+$ ]]; then
+                ERP_NO_PADDED=$(printf "%03d" "$raw_ERP_NO")
+            else
+                ERP_NO_PADDED="$raw_ERP_NO"
+            fi
+
+            # Pad GPS_NO to 3 digits only if numeric, else keep as is
+            if [[ "$raw_GPS_NO" =~ ^[0-9]+$ ]]; then
+                GPS_NO_PADDED=$(printf "%03d" "$raw_GPS_NO")
+            else
+                GPS_NO_PADDED="$raw_GPS_NO"
+            fi
+
+            echo "Matched CSV: ADBS_ID=$ADBS_ID, ASSESSMENT_ID=$ASSESSMENT_ID, ERP_NO=$raw_ERP_NO (padded: $ERP_NO_PADDED), GPS_NO=$raw_GPS_NO"
             echo "→ Destination: $dest_dir"
 
-            # Check if data already exists
+            # Check if .mff or .sfp already exists
             if find "$dest_dir" -mindepth 1 \( -type d -name "*.mff" -o -type f -name "*.sfp" \) | grep -q .; then
                 echo "Data already exists in $dest_dir (mff or sfp), skipping subject."
                 continue
@@ -78,14 +90,13 @@ for eeg_folder in "${EEG_dirs[@]}"; do
 
             mkdir -p "$dest_dir"
 
-            # Copy EEG folder
             echo "Copying EEG folder: $eeg_subfolder → $dest_dir/"
             cp -r "$eeg_subfolder" "$dest_dir/"
 
-            # Look for ERP folder
+            # Find ERP folder using padded ERP_NO
             found_erp=0
             for erp_folder in "${ERP_dirs[@]}"; do
-                erp_match=$(find "$erp_folder" -type d -name "${ERP_NO}_*.mff" | head -n1)
+                erp_match=$(find "$erp_folder" -type d -name "${ERP_NO_PADDED}_${ADBS_ID}_*.mff" | head -n1)
                 if [ -n "$erp_match" ]; then
                     echo "Copying ERP folder: $erp_match → $dest_dir/"
                     cp -r "$erp_match" "$dest_dir/"
@@ -94,25 +105,28 @@ for eeg_folder in "${EEG_dirs[@]}"; do
                 fi
             done
             if [ "$found_erp" -eq 0 ]; then
-                echo "No ERP folder found for ERP_NO=$ERP_NO"
+                echo "No ERP folder found for ERP_NO=$raw_ERP_NO (padded: $ERP_NO_PADDED)"
             fi
 
-            # Look for GPS file
+            # Find GPS file only if GPS_NO is not FALSE
             found_gps=0
-            for gps_folder in "${GPS_dirs[@]}"; do
-                gps_file=$(find "$gps_folder" -type f \( \
-                    -name "coordinates_${GPS_NO}_BESA.sfp" \
-                    -o -name "coordinates_${ASSESSMENT_ID}_BESA.sfp" \
-                \) | head -n1)
-                if [ -n "$gps_file" ]; then
-                    echo "Copying GPS file: $gps_file → $dest_dir/"
-                    cp "$gps_file" "$dest_dir/"
-                    found_gps=1
-                    break
+            if [ "$raw_GPS_NO" != "FALSE" ]; then
+                for gps_folder in "${GPS_dirs[@]}"; do
+                    gps_file=$(find "$gps_folder" -type f \( \
+                        -name "coordinates_${GPS_NO_PADDED}_BESA.sfp" \
+                        -o -name "coordinates_${ASSESSMENT_ID}_BESA.sfp" \) | head -n1)
+                    if [ -n "$gps_file" ]; then
+                        echo "📄 Copying GPS file: $gps_file → $dest_dir/"
+                        cp "$gps_file" "$dest_dir/"
+                        found_gps=1
+                        break
+                    fi
+                done
+                if [ "$found_gps" -eq 0 ]; then
+                    echo "No GPS file found for GPS_NO=$raw_GPS_NO (padded: $GPS_NO_PADDED) or ASSESSMENT_ID=$ASSESSMENT_ID"
                 fi
-            done
-            if [ "$found_gps" -eq 0 ]; then
-                echo "No GPS file found for GPS_NO=$GPS_NO or ASSESSMENT_ID=$ASSESSMENT_ID"
+            else
+                echo "GPS_NO is FALSE – skipping GPS copy"
             fi
 
             # Create readme.json
@@ -122,15 +136,15 @@ for eeg_folder in "${EEG_dirs[@]}"; do
   "ADBS_ID": "$ADBS_ID",
   "ASSESSMENT_ID": "$ASSESSMENT_ID",
   "EEG_ID": "$EEG_ID",
-  "ERP_NO": "$ERP_NO",
-  "GPS_NO": "$GPS_NO",
+  "ERP_NO": "$raw_ERP_NO",
+  "GPS_NO": "$raw_GPS_NO",
   "SSO_REMARKS": "$SSO_REMARKS_ESCAPED"
 }
 EOF
-            echo "Created $readme_file"
+            echo " Created $readme_file"
 
         else
-            echo "No CSV match for EEG_ID=$eeg_id"
+            echo " No CSV match for EEG_ID=$eeg_id"
         fi
 
     done
